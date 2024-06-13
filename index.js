@@ -1,6 +1,6 @@
 const express = require("express");
 const ping = require("ping");
-const snmp = require("snmp-native");
+const snmp = require("net-snmp");
 const os = require("os");
 
 const app = express();
@@ -12,7 +12,11 @@ function getLocalIp() {
   for (const interfaceName in interfaces) {
     const iface = interfaces[interfaceName];
     for (const alias of iface) {
-      if (alias.family === "IPv4" && !alias.internal) {
+      if (
+        alias.family === "IPv4" &&
+        !alias.internal &&
+        alias.address.startsWith("192.168.")
+      ) {
         return alias.address;
       }
     }
@@ -26,18 +30,29 @@ const networkPrefix = localIp.substring(0, localIp.lastIndexOf(".") + 1);
 
 // Function to ping a single IP with timeout
 function pingIp(ip, timeout = 2000) {
-  return Promise.race([
-    ping.promise.probe(ip),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), timeout)
-    ),
-  ]);
+  return new Promise((resolve, reject) => {
+    ping.promise
+      .probe(ip)
+      .then((res) => {
+        resolve(res.alive);
+      })
+      .catch(reject);
+
+    setTimeout(() => {
+      reject(new Error("Timeout"));
+    }, timeout);
+  });
 }
 
 // Function to check if a device is a printer using SNMP with timeout
-function checkIfPrinter(ip, timeout = 500) {
+function checkIfPrinter(ip, timeout = 20000) {
+  console.log("===============",ip);
   return new Promise((resolve, reject) => {
-    const session = new snmp.Session({ host: ip, community: "public" });
+    const session = new snmp.Session({
+      host: ip,
+      community: "public",
+      version: snmp.Version2c,
+    });
     const oid = [1, 3, 6, 1, 2, 1, 25, 3, 2, 1, 3]; // OID for hrDeviceType
 
     const timer = setTimeout(() => {
@@ -47,6 +62,7 @@ function checkIfPrinter(ip, timeout = 500) {
 
     session.get({ oid: oid }, function (error, varbinds) {
       clearTimeout(timer);
+      session.close();
       if (error) {
         reject(error);
       } else {
@@ -54,27 +70,38 @@ function checkIfPrinter(ip, timeout = 500) {
           varbinds[0].value.toString() === "1.3.6.1.2.1.25.3.1.5"; // OID for printer
         resolve(isPrinter);
       }
-      session.close();
     });
   });
 }
 
-// Function to scan the network
+// Function to scan the network in batches
 async function scanNetwork() {
-  let devices = [];
-  const start = 200;
-  const end = 220;
+  const devices = [];
+  const start = 1;
+  const end = 19;
+  const batchSize = 10;
 
-  for (let i = start; i <= end; i++) {
-    const ip = `${networkPrefix}${i}`;
-    try {
-      const res = await pingIp(ip);
-      if (res && res.alive) {
-        devices.push(ip);
-      }
-    } catch (error) {
-      console.error(`Error pinging ${ip}:`, error);
+  for (let i = start; i <= end; i += batchSize) {
+    const batchPromises = [];
+    for (let j = 0; j < batchSize && i + j <= end; j++) {
+      const ip = `${networkPrefix}${i + j}`;
+      batchPromises.push(
+        pingIp(ip)
+          .then((isAlive) => {
+            if (isAlive) {
+              return ip;
+            }
+            return null;
+          })
+          .catch((error) => {
+            console.error(`Error pinging ${ip}:`, error);
+            return null;
+          })
+      );
     }
+
+    const results = await Promise.all(batchPromises);
+    devices.push(...results.filter((ip) => ip !== null));
   }
 
   return devices;
