@@ -35,7 +35,7 @@ function pingIp(ip, timeout = 2000) {
 }
 
 // Function to check if a device is a printer using SNMP with timeout
-function checkIfPrinter(ip, timeout = 2000) {
+function checkIfPrinter(ip, timeout = 500) {
   return new Promise((resolve, reject) => {
     const session = new snmp.Session({ host: ip, community: "public" });
     const oid = [1, 3, 6, 1, 2, 1, 25, 3, 2, 1, 3]; // OID for hrDeviceType
@@ -62,8 +62,8 @@ function checkIfPrinter(ip, timeout = 2000) {
 // Function to scan the network
 async function scanNetwork() {
   let devices = [];
-  const start = 1;
-  const end = 254;
+  const start = 200;
+  const end = 220;
 
   for (let i = start; i <= end; i++) {
     const ip = `${networkPrefix}${i}`;
