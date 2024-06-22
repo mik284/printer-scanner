@@ -2,6 +2,7 @@ const express = require("express");
 const ping = require("ping");
 const snmp = require("net-snmp");
 const os = require("os");
+const util = require("util");
 
 const app = express();
 const port = 3008;
@@ -29,75 +30,56 @@ console.log(localIp);
 const networkPrefix = localIp.substring(0, localIp.lastIndexOf(".") + 1);
 
 // Function to ping a single IP with timeout
-function pingIp(ip, timeout = 2000) {
-  return new Promise((resolve, reject) => {
-    ping.promise
-      .probe(ip)
-      .then((res) => {
-        resolve(res.alive);
-      })
-      .catch(reject);
-
-    setTimeout(() => {
-      reject(new Error("Timeout"));
-    }, timeout);
-  });
+async function pingIp(ip, timeout = 2000) {
+  try {
+    const res = await ping.promise.probe(ip, { timeout: timeout / 1000 });
+    return res.alive;
+  } catch (error) {
+    console.error(`Error pinging ${ip}:`, error);
+    return false;
+  }
 }
 
-// Function to check if a device is a printer using SNMP with timeout
-function checkIfPrinter(ip, timeout = 20000) {
-  console.log("===============",ip);
-  return new Promise((resolve, reject) => {
-    const session = new snmp.Session({
-      host: ip,
-      community: "public",
-      version: snmp.Version2c,
-    });
-    const oid = [1, 3, 6, 1, 2, 1, 25, 3, 2, 1, 3]; // OID for hrDeviceType
+// Async function to check if a device is a printer using SNMP with timeout
+async function checkIfPrinter(ip, timeout = 20000) {
+  console.log("Checking:", ip);
 
-    const timer = setTimeout(() => {
-      session.close();
+  const session = snmp.createSession(ip, "public", { version: snmp.Version2c });
+  const oid = "1.3.6.1.2.1.25.3.2.1.3"; // OID for hrDeviceType
+  const getAsync = util.promisify(session.get.bind(session));
+
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
       reject(new Error("Timeout"));
     }, timeout);
-
-    session.get({ oid: oid }, function (error, varbinds) {
-      clearTimeout(timer);
-      session.close();
-      if (error) {
-        reject(error);
-      } else {
-        const isPrinter =
-          varbinds[0].value.toString() === "1.3.6.1.2.1.25.3.1.5"; // OID for printer
-        resolve(isPrinter);
-      }
-    });
   });
+
+  try {
+    const varbinds = await Promise.race([getAsync([oid]), timeoutPromise]);
+    clearTimeout(timer);
+    const isPrinter = varbinds[0].value.toString() === "1.3.6.1.2.1.25.3.1.5"; // OID for printer
+    return isPrinter;
+  } catch (error) {
+    console.error(`Error checking ${ip}:`, error);
+    return false;
+  } finally {
+    session.close();
+  }
 }
 
 // Function to scan the network in batches
 async function scanNetwork() {
   const devices = [];
   const start = 1;
-  const end = 19;
-  const batchSize = 10;
+  const end = 254; // Scan the full range of possible addresses
+  const batchSize = 20;
 
   for (let i = start; i <= end; i += batchSize) {
     const batchPromises = [];
     for (let j = 0; j < batchSize && i + j <= end; j++) {
       const ip = `${networkPrefix}${i + j}`;
-      batchPromises.push(
-        pingIp(ip)
-          .then((isAlive) => {
-            if (isAlive) {
-              return ip;
-            }
-            return null;
-          })
-          .catch((error) => {
-            console.error(`Error pinging ${ip}:`, error);
-            return null;
-          })
-      );
+      batchPromises.push(pingIp(ip).then((isAlive) => (isAlive ? ip : null)));
     }
 
     const results = await Promise.all(batchPromises);
@@ -114,13 +96,9 @@ app.get("/scan", async (req, res) => {
     const printers = [];
 
     for (const ip of devices) {
-      try {
-        const isPrinter = await checkIfPrinter(ip);
-        if (isPrinter) {
-          printers.push(ip);
-        }
-      } catch (error) {
-        console.error(`Error checking ${ip}:`, error);
+      const isPrinter = await checkIfPrinter(ip);
+      if (isPrinter) {
+        printers.push(ip);
       }
     }
 
