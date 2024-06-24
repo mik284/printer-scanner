@@ -72,7 +72,7 @@ async function checkIfPrinter(ip, timeout = 20000) {
 async function scanNetwork() {
   const devices = [];
   const start = 1;
-  const end = 254; // Scan the full range of possible addresses
+  const end = 20; // Scan the full range of possible addresses
   const batchSize = 20;
 
   for (let i = start; i <= end; i += batchSize) {
@@ -82,8 +82,14 @@ async function scanNetwork() {
       batchPromises.push(pingIp(ip).then((isAlive) => (isAlive ? ip : null)));
     }
 
-    const results = await Promise.all(batchPromises);
-    devices.push(...results.filter((ip) => ip !== null));
+    const results = await Promise.allSettled(batchPromises);
+    devices.push(
+      ...results
+        .filter(
+          (result) => result.status === "fulfilled" && result.value !== null
+        )
+        .map((result) => result.value)
+    );
   }
 
   return devices;
@@ -104,6 +110,7 @@ app.get("/scan", async (req, res) => {
 
     res.json({ printers });
   } catch (error) {
+    console.error(`Error scanning network:`, error);
     res.status(500).send("Error scanning network");
   }
 });
