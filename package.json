@@ -11,6 +11,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "escpos": "3.0.0-alpha.6",
+    "escpos-network": "3.0.0-alpha.5",
     "express": "^4.19.2",
     "net-snmp": "^3.11.2",
     "ping": "^0.4.4",
