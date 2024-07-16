@@ -6,7 +6,7 @@ escpos.Network = require("escpos-network");
 app.use(express.json()); // Middleware to parse JSON bodies
 
 // Set up the printer connection
-const device = new escpos.Network("192.168.1.100"); // Replace with your printer's IP address
+const device = new escpos.Network("localhost", 631); // Replace with your printer's IP address
 const printer = new escpos.Printer(device, { encoding: "GBK" }); // Optional, but recommended for thermal printers
 
 // Define a route to print a receipt
